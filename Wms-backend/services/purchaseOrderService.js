@@ -1,4 +1,4 @@
-const { PurchaseOrder, PurchaseOrderItem, Supplier, Product, SupplierProduct } = require('../models');
+const { PurchaseOrder, PurchaseOrderItem, Supplier, Product, SupplierProduct, GoodsReceipt } = require('../models');
 const { Op } = require('sequelize');
 const PDFDocument = require('pdfkit');
 const auditLogService = require('./auditLogService');
@@ -172,7 +172,13 @@ async function approve(id, body, reqUser) {
   if (!po) throw new Error('Purchase order not found');
   if (reqUser.role !== 'super_admin' && po.companyId !== reqUser.companyId) throw new Error('Purchase order not found');
   if (reqUser.clientId && po.clientId !== reqUser.clientId) throw new Error('Not authorized to access this client data');
-  if (po.status !== 'pending' && po.status !== 'draft') throw new Error('Only pending/draft PO can be approved/rejected');
+  const hasAsn = await GoodsReceipt.findOne({ where: { purchaseOrderId: po.id } });
+  if (po.status !== 'pending' && po.status !== 'draft' && po.status !== 'approved') {
+    throw new Error('Only pending/draft PO can be approved/rejected');
+  }
+  if (po.status === 'approved' && hasAsn) {
+    throw new Error('PO already approved and ASN already exists');
+  }
 
   const action = String(body.action || 'approve').toLowerCase();
   if (action === 'reject') {
@@ -246,7 +252,7 @@ async function generateAsn(id, body, reqUser) {
     eta: body.eta || null,
     grNumber,
     status: 'pending',
-    totalExpected: (po.PurchaseOrderItems || []).reduce((s, i) => s + (i.quantity || 0), 0),
+    totalExpected: (po.PurchaseOrderItems || []).reduce((s, i) => s + (Number(i.quantity) * (Number(i.packSize) || 1)), 0),
     totalReceived: 0,
     notes: body.notes || `ASN generated from ${po.poNumber}`,
   });
@@ -256,9 +262,9 @@ async function generateAsn(id, body, reqUser) {
     productId: i.productId,
     productName: i.productName,
     productSku: i.productSku,
-    expectedQty: i.quantity,
+    expectedQty: (Number(i.quantity) * (Number(i.packSize) || 1)),
     receivedQty: 0,
-    qtyToBook: i.quantity, // Default qty to book is the expected qty
+    qtyToBook: (Number(i.quantity) * (Number(i.packSize) || 1)), 
   }));
   if (grItems.length) await GoodsReceiptItem.bulkCreate(grItems);
 

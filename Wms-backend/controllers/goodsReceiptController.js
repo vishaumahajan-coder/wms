@@ -79,4 +79,24 @@ async function finalizeReceiving(req, res, next) {
   }
 }
 
-module.exports = { list, getById, create, updateReceived, updateAsnItems, finalizeReceiving, remove };
+async function exportCsvTemplate(req, res, next) {
+  try {
+    const { csv, filename } = await goodsReceiptService.exportCsvTemplate(req.params.id, req.user);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function importCsvBbd(req, res, next) {
+  try {
+    const data = await goodsReceiptService.importCsvBbd(req.params.id, req.body.rows, req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { list, getById, create, updateReceived, updateAsnItems, finalizeReceiving, remove, exportCsvTemplate, importCsvBbd };

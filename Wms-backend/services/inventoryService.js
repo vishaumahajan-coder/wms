@@ -54,7 +54,14 @@ async function listProducts(reqUser, query = {}) {
   const where = {};
   if (reqUser.role !== 'super_admin') where.companyId = reqUser.companyId;
   else if (query.companyId) where.companyId = query.companyId;
+  
   if (query.categoryId) where.categoryId = query.categoryId;
+  if (query.supplierId) {
+    where[Op.or] = [
+      { supplierId: query.supplierId },
+      { '$SupplierProducts.supplier_id$': query.supplierId }
+    ];
+  }
   if (query.status) where.status = query.status;
   if (query.search) {
     where[Op.or] = [
@@ -71,7 +78,13 @@ async function listProducts(reqUser, query = {}) {
       { association: 'Category', attributes: ['id', 'name', 'code'], required: false },
       { association: 'Company', attributes: ['id', 'name', 'code'], required: false },
       { association: 'ProductStocks', attributes: ['quantity'], required: false },
+      { 
+        association: 'SupplierProducts', 
+        required: false,
+        where: query.supplierId ? { supplierId: query.supplierId } : undefined
+      },
     ],
+    subQuery: false, // Required when using Op.or with includes
   });
   return products;
 }

@@ -2,6 +2,13 @@ const { Op } = require('sequelize');
 const { GoodsReceipt, GoodsReceiptItem, PurchaseOrder, PurchaseOrderItem, Supplier, Product, ProductStock, Warehouse, Location, Batch } = require('../models');
 const auditLogService = require('./auditLogService');
 
+function isTruthyYes(v) {
+  if (v === true) return true;
+  if (!v) return false;
+  const s = String(v).toUpperCase().trim();
+  return s === 'YES' || s === 'TRUE' || s === '1' || s === 'Y';
+}
+
 async function list(reqUser, query = {}) {
   const where = {};
   if (reqUser.role === 'super_admin') {
@@ -22,7 +29,7 @@ async function list(reqUser, query = {}) {
     include: [
       { association: 'PurchaseOrder', include: [{ association: 'Supplier', attributes: ['id', 'name'] }] },
       { association: 'Warehouse', attributes: ['id', 'name', 'code'] },
-      { association: 'GoodsReceiptItems', include: [{ association: 'Product', attributes: ['id', 'name', 'sku'] }] },
+      { association: 'GoodsReceiptItems', include: [{ association: 'Product', attributes: ['id', 'name', 'sku', 'packSize'] }] },
     ],
   });
   applyGrnDisplayNormalization(receipts);
@@ -220,7 +227,7 @@ async function finalizeReceiving(id, reqUser) {
   try {
     // 2. Fetch and Lock GRN
     const gr = await GoodsReceipt.findByPk(id, { 
-      include: ['GoodsReceiptItems'],
+      include: [{ association: 'GoodsReceiptItems', include: ['Product'] }],
       transaction: t,
       lock: t.LOCK.UPDATE
     });
@@ -246,6 +253,15 @@ async function finalizeReceiving(id, reqUser) {
       // Check for over-receiving against PO line
       const poItem = po.PurchaseOrderItems.find(p => p.productId === item.productId);
       if (!poItem) throw new Error(`Product ${item.productSku} not found in original Purchase Order`);
+
+      // 4.1 Heat-Sensitive Check
+      if (isTruthyYes(item.Product?.heatSensitive)) {
+        if (!item.locationId) throw new Error(`Location is required for heat-sensitive product "${item.productName}"`);
+        const loc = await Location.findByPk(item.locationId, { transaction: t });
+        if (!loc || !isTruthyYes(loc.heatSensitive)) {
+          throw new Error(`Location ${loc?.name || item.locationId} is not suitable for heat-sensitive product "${item.productName}"`);
+        }
+      }
 
       // Calculate what has been received so far in other finalized GRNs
       const otherGrItems = await GoodsReceiptItem.findAll({
@@ -371,6 +387,48 @@ async function finalizeReceiving(id, reqUser) {
   }
 }
 
+async function exportCsvTemplate(id, reqUser) {
+  const gr = await GoodsReceipt.findByPk(id, { include: ['GoodsReceiptItems'] });
+  if (!gr) throw new Error('Goods receipt not found');
+  if (reqUser.role !== 'super_admin' && gr.companyId !== reqUser.companyId) throw new Error('Not authorized');
+
+  let csv = 'SKU,Expected Qty (Each),Best Before Date (DD/MM/YYYY),Batch Number\n';
+  (gr.GoodsReceiptItems || []).forEach(item => {
+    csv += `${item.productSku},${Number(item.expectedQty).toString()},,\n`;
+  });
+  return { csv, filename: `Template_${gr.grNumber}.csv` };
+}
+
+async function importCsvBbd(id, rows, reqUser) {
+  const gr = await GoodsReceipt.findByPk(id, { include: ['GoodsReceiptItems'] });
+  if (!gr) throw new Error('Goods receipt not found');
+  if (reqUser.role !== 'super_admin' && gr.companyId !== reqUser.companyId) throw new Error('Not authorized');
+
+  const dayjs = require('dayjs');
+  const customParseFormat = require('dayjs/plugin/customParseFormat');
+  dayjs.extend(customParseFormat);
+
+  for (const row of rows) {
+    const sku = (row.SKU || row['sku'] || '').trim();
+    if (!sku) continue;
+    
+    const bbdStr = (row['Best Before Date (DD/MM/YYYY)'] || row['Best Before Date'] || row['bbd'] || row['best_before_date'] || '').trim();
+    const batch = (row['Batch Number'] || row['Batch'] || row['batch'] || row['batch_number'] || '').trim();
+    
+    const items = gr.GoodsReceiptItems.filter(i => i.productSku === sku);
+    for (const item of items) {
+      const updates = {};
+      if (batch) updates.batchId = batch;
+      if (bbdStr) {
+        const d = dayjs(bbdStr, ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD-MM-YYYY']);
+        if (d.isValid()) updates.bestBeforeDate = d.format('YYYY-MM-DD');
+      }
+      if (Object.keys(updates).length > 0) await item.update(updates);
+    }
+  }
+  return getById(id, reqUser);
+}
+
 async function remove(id, reqUser) {
   const gr = await GoodsReceipt.findByPk(id);
   if (!gr) throw new Error('Goods receipt not found');
@@ -380,4 +438,4 @@ async function remove(id, reqUser) {
   return { deleted: true };
 }
 
-module.exports = { list, getById, create, updateReceived, updateAsnItems, finalizeReceiving, remove };
+module.exports = { list, getById, create, updateReceived, updateAsnItems, finalizeReceiving, remove, exportCsvTemplate, importCsvBbd };

@@ -21,9 +21,9 @@ const GoodsReceipt = sequelize.define('GoodsReceipt', {
   },
   eta: { type: DataTypes.DATE, allowNull: true },
   notes: { type: DataTypes.TEXT, allowNull: true },
-  totalExpected: { type: DataTypes.INTEGER, defaultValue: 0 },
-  totalReceived: { type: DataTypes.INTEGER, defaultValue: 0 },
-  totalToBook: { type: DataTypes.INTEGER, defaultValue: 0 },
+  totalExpected: { type: DataTypes.DECIMAL(12, 3), defaultValue: 0 },
+  totalReceived: { type: DataTypes.DECIMAL(12, 3), defaultValue: 0 },
+  totalToBook: { type: DataTypes.DECIMAL(12, 3), defaultValue: 0 },
 }, {
   tableName: 'goods_receipts',
   timestamps: true,

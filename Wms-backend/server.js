@@ -107,6 +107,10 @@ app.put('/api/goods-receiving/:id/asn', authenticate, requireStaff, goodsReceipt
 app.post('/api/goods-receiving/:id/finalize', authenticate, requireStaff, goodsReceiptController.finalizeReceiving);
 app.delete('/api/goods-receiving/:id', authenticate, requireAdmin, goodsReceiptController.remove);
 
+// CSV Management for GRN
+app.get('/api/goods-receiving/:id/csv-template', authenticate, requireStaff, goodsReceiptController.exportCsvTemplate);
+app.post('/api/goods-receiving/:id/csv-import-bbd', authenticate, requireStaff, goodsReceiptController.importCsvBbd);
+
 // Inventory products - explicit DELETE so /api/inventory/products/:id never 404s
 const invProductRoles = ['super_admin', 'company_admin', 'inventory_manager'];
 app.delete('/api/inventory/products/:id', authenticate, requireRole(...invProductRoles), inventoryController.removeProduct);
@@ -243,6 +247,9 @@ async function start() {
         { t: 'goods_receipts', c: 'company_id', type: 'INT' },
         { t: 'product_stocks', c: 'company_id', type: 'INT' },
         { t: 'audit_logs', c: 'client_id', type: 'INT' },
+        { t: 'companies', c: 'header_image_url', type: 'TEXT' },
+        { t: 'customers', c: 'header_image_url', type: 'TEXT' },
+        { t: 'suppliers', c: 'header_image_url', type: 'TEXT' },
       ];
       for (const col of manualCols) {
         try {
@@ -252,6 +259,22 @@ async function start() {
           if (!err.message.includes('Duplicate column') && !err.message.includes('Table') && !err.message.includes("doesn't exist")) {
             console.warn(`[DB] Column ${col.t}.${col.c} error: ${err.message.slice(0, 60)}`);
           }
+        }
+      }
+      const manualAlters = [
+        { t: 'goods_receipts', c: 'total_expected', type: 'DECIMAL(12, 3)' },
+        { t: 'goods_receipts', c: 'total_received', type: 'DECIMAL(12, 3)' },
+        { t: 'goods_receipts', c: 'total_to_book', type: 'DECIMAL(12, 3)' },
+        { t: 'goods_receipt_items', c: 'expected_qty', type: 'DECIMAL(12, 3)' },
+        { t: 'goods_receipt_items', c: 'received_qty', type: 'DECIMAL(12, 3)' },
+        { t: 'goods_receipt_items', c: 'qty_to_book', type: 'DECIMAL(12, 3)' },
+      ];
+      for (const col of manualAlters) {
+        try {
+          await sequelize.query(`ALTER TABLE ${col.t} MODIFY COLUMN ${col.c} ${col.type}`);
+          console.log(`[DB] Column ${col.t}.${col.c} altered to ${col.type}`);
+        } catch (err) {
+          // ignore if table/col doesn't exist yet, it will be created by sync
         }
       }
     };
